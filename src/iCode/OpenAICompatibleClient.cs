@@ -23,18 +23,20 @@ public class OpenAICompatibleClient : IModelProvider
         _http.DefaultRequestHeaders.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
     }
 
-    public async Task<ProviderResponse> SendAsync(IReadOnlyList<ChatMessage> messages, CancellationToken ct = default)
+    public async Task<ProviderResponse> SendAsync(
+        IReadOnlyList<ChatMessage> messages,
+        IReadOnlyList<JsonObject>? tools = null,
+        CancellationToken ct = default)
     {
         var body = new JsonObject
         {
             ["model"] = _model,
             ["max_tokens"] = _maxTokens,
-            ["messages"] = new JsonArray(messages.Select(m => (JsonNode)new JsonObject
-            {
-                ["role"] = m.Role,
-                ["content"] = m.Content
-            }).ToArray())
+            ["messages"] = new JsonArray(messages.Select(SerializeMessage).ToArray())
         };
+
+        if (tools != null && tools.Count > 0)
+            body["tools"] = new JsonArray(tools.Select(t => (JsonNode)t.DeepClone()).ToArray());
 
         var json = body.ToJsonString();
         using var request = new HttpRequestMessage(HttpMethod.Post, $"{_baseUrl}/chat/completions");
@@ -51,11 +53,15 @@ public class OpenAICompatibleClient : IModelProvider
             .GetProperty("choices")[0]
             .GetProperty("message");
 
-        var content = message.GetProperty("content").GetString() ?? string.Empty;
+        var content = message.TryGetProperty("content", out var contentEl) && contentEl.ValueKind != JsonValueKind.Null
+            ? contentEl.GetString() ?? string.Empty
+            : string.Empty;
 
+        string? toolCallsJson = null;
         List<ToolCall>? toolCalls = null;
         if (message.TryGetProperty("tool_calls", out var toolCallsEl) && toolCallsEl.ValueKind == JsonValueKind.Array)
         {
+            toolCallsJson = toolCallsEl.GetRawText();
             toolCalls = toolCallsEl.EnumerateArray().Select(tc => new ToolCall(
                 tc.GetProperty("id").GetString() ?? string.Empty,
                 tc.GetProperty("function").GetProperty("name").GetString() ?? string.Empty,
@@ -63,6 +69,28 @@ public class OpenAICompatibleClient : IModelProvider
             )).ToList();
         }
 
-        return new ProviderResponse(content, toolCalls);
+        return new ProviderResponse(content, toolCalls, toolCallsJson);
+    }
+
+    private static JsonNode SerializeMessage(ChatMessage m)
+    {
+        var obj = new JsonObject { ["role"] = m.Role };
+
+        if (m.ToolCallsJson != null)
+        {
+            obj["content"] = (JsonNode?)null;
+            obj["tool_calls"] = JsonNode.Parse(m.ToolCallsJson);
+        }
+        else if (m.ToolCallId != null)
+        {
+            obj["content"] = m.Content ?? string.Empty;
+            obj["tool_call_id"] = m.ToolCallId;
+        }
+        else
+        {
+            obj["content"] = m.Content ?? string.Empty;
+        }
+
+        return obj;
     }
 }

@@ -7,12 +7,13 @@ var config = new ConfigurationBuilder()
     .Build();
 
 var maxTokens = int.Parse(config["Agent:MaxTokens"] ?? "8192");
-var provider = ModelProviderFactory.Create(config, maxTokens);
+var provider  = ModelProviderFactory.Create(config, maxTokens);
 
 var workingDir = Directory.GetCurrentDirectory();
-var dbPath = ProjectIdentity.GetContextDbPath(workingDir);
+var dbPath     = ProjectIdentity.GetContextDbPath(workingDir);
 
-using var store = new ContextStore(dbPath);
+using var store   = new ContextStore(dbPath);
+var executor = new ToolExecutor(workingDir);
 
 Console.WriteLine($"iCode agent started. Working directory: {workingDir}");
 Console.WriteLine("Type '/exit' to quit.\n");
@@ -33,17 +34,43 @@ while (true)
 
     store.Append("user", input);
 
-    try
+    // Tool-calling loop: repeat until the model sends a text reply with no tool calls
+    while (true)
     {
-        var history = store.LoadAll()
-            .Select(m => new ChatMessage(m.Role, m.Content))
-            .ToList();
-        var response = await provider.SendAsync(history);
-        store.Append("assistant", response.Content);
-        Console.WriteLine($"\nAssistant: {response.Content}\n");
-    }
-    catch (Exception ex)
-    {
-        Console.Error.WriteLine($"Error: {ex.Message}");
+        try
+        {
+            var history  = store.LoadAll().Select(ToMessage).ToList();
+            var response = await provider.SendAsync(history, ToolDefinitions.All);
+
+            if (response.ToolCalls == null || response.ToolCalls.Count == 0)
+            {
+                store.Append("assistant", response.Content);
+                Console.WriteLine($"\nAssistant: {response.Content}\n");
+                break;
+            }
+
+            store.AppendAssistantToolCalls(response.ToolCallsJson!);
+
+            foreach (var toolCall in response.ToolCalls)
+            {
+                Console.WriteLine($"[Tool: {toolCall.Name}]");
+                var result  = await executor.ExecuteAsync(toolCall.Name, toolCall.Arguments);
+                var preview = result.Length > 300 ? result[..300] + "…" : result;
+                Console.WriteLine($"[Result: {preview}]");
+                store.AppendToolResult(toolCall.Id, toolCall.Name, result);
+            }
+        }
+        catch (Exception ex)
+        {
+            Console.Error.WriteLine($"Error: {ex.Message}");
+            break;
+        }
     }
 }
+
+static ChatMessage ToMessage(ContextMessage m) => new(m.Role, m.Content)
+{
+    ToolCallsJson = m.ToolCalls,
+    ToolCallId    = m.ToolCallId,
+    ToolName      = m.Name
+};
