@@ -13,14 +13,23 @@ public class OpenAICompatibleClient : IModelProvider
     private readonly string _baseUrl;
 
     public OpenAICompatibleClient(string baseUrl, string model, int maxTokens, string? apiKey)
+        : this(CreateHttpClient(apiKey), baseUrl, model, maxTokens) { }
+
+    public OpenAICompatibleClient(HttpClient httpClient, string baseUrl, string model, int maxTokens)
     {
         _baseUrl = baseUrl.TrimEnd('/');
         _model = model;
         _maxTokens = maxTokens;
-        _http = new HttpClient();
+        _http = httpClient;
+    }
+
+    private static HttpClient CreateHttpClient(string? apiKey)
+    {
+        var client = new HttpClient();
         if (!string.IsNullOrEmpty(apiKey))
-            _http.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", apiKey);
-        _http.DefaultRequestHeaders.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
+            client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", apiKey);
+        client.DefaultRequestHeaders.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
+        return client;
     }
 
     public async Task<ProviderResponse> SendAsync(

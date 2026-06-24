@@ -13,7 +13,11 @@ var workingDir = Directory.GetCurrentDirectory();
 var dbPath     = ProjectIdentity.GetContextDbPath(workingDir);
 
 using var store   = new ContextStore(dbPath);
-var executor = new ToolExecutor(workingDir);
+var executor      = new ToolExecutor(workingDir);
+var agentsContext  = new AgentsContext(workingDir);
+
+if (agentsContext.SystemPrompt != null)
+    Console.WriteLine("[AGENTS.md loaded into system prompt]");
 
 Console.WriteLine($"iCode agent started. Working directory: {workingDir}");
 Console.WriteLine("Type '/exit' to quit.\n");
@@ -39,7 +43,7 @@ while (true)
     {
         try
         {
-            var history  = store.LoadAll().Select(ToMessage).ToList();
+            var history  = agentsContext.Prepend(store.LoadAll().Select(ToMessage).ToList());
             var response = await provider.SendAsync(history, ToolDefinitions.All);
 
             if (response.ToolCalls == null || response.ToolCalls.Count == 0)
