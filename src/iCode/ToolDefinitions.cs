@@ -33,7 +33,11 @@ public static class ToolDefinitions
 
         Tool("execute_command", "Execute a shell command in the working directory",
             Props(Str("command", "Shell command to execute")),
-            required: ["command"])
+            required: ["command"]),
+
+        Tool("load_skill", "Load full instructions for a skill listed in the system prompt",
+            Props(Str("name", "Skill name exactly as shown in the Available Skills list")),
+            required: ["name"])
     };
 
     private static JsonObject Tool(string name, string description, JsonObject properties, string[] required) =>

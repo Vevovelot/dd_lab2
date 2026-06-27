@@ -7,10 +7,12 @@ namespace iCode;
 public class ToolExecutor
 {
     private readonly string _workingDirectory;
+    private readonly SkillsLoader? _skillsLoader;
 
-    public ToolExecutor(string workingDirectory)
+    public ToolExecutor(string workingDirectory, SkillsLoader? skillsLoader = null)
     {
         _workingDirectory = Path.GetFullPath(workingDirectory);
+        _skillsLoader = skillsLoader;
     }
 
     public async Task<string> ExecuteAsync(string toolName, string argumentsJson)
@@ -27,6 +29,7 @@ public class ToolExecutor
                 "delete_file"     => DeleteFile(args),
                 "list_files"      => ListFiles(args),
                 "execute_command" => await ExecuteCommandAsync(args),
+                "load_skill"      => LoadSkill(args),
                 _                 => $"Error: unknown tool '{toolName}'"
             };
         }
@@ -117,6 +120,15 @@ public class ToolExecutor
         if (!string.IsNullOrEmpty(stderr))  result += $"\nSTDERR: {stderr}";
         if (process.ExitCode != 0)          result += $"\nExit code: {process.ExitCode}";
         return string.IsNullOrWhiteSpace(result) ? "(no output)" : result;
+    }
+
+    private string LoadSkill(JsonElement args)
+    {
+        if (_skillsLoader == null)
+            return "Error: no skills available";
+        var name = args.GetProperty("name").GetString()!;
+        var body = _skillsLoader.GetBody(name);
+        return body ?? $"Error: skill '{name}' not found";
     }
 
     public string SafePath(string relativePath)

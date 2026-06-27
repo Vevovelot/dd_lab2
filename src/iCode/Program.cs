@@ -13,14 +13,26 @@ var workingDir = Directory.GetCurrentDirectory();
 var dbPath     = ProjectIdentity.GetContextDbPath(workingDir);
 
 using var store   = new ContextStore(dbPath);
-var executor      = new ToolExecutor(workingDir);
 var agentsContext  = new AgentsContext(workingDir);
+var skillsLoader   = new SkillsLoader(workingDir);
+var executor       = new ToolExecutor(workingDir, skillsLoader);
 
 if (agentsContext.SystemPrompt != null)
     Console.WriteLine("[AGENTS.md loaded into system prompt]");
+if (skillsLoader.Skills.Count > 0)
+    Console.WriteLine($"[{skillsLoader.Skills.Count} skill(s) loaded from SKILLS/]");
 
 Console.WriteLine($"iCode agent started. Working directory: {workingDir}");
 Console.WriteLine("Type '/exit' to quit.\n");
+
+// Build combined system prompt once at startup
+var systemParts = new System.Collections.Generic.List<string>();
+if (agentsContext.SystemPrompt != null)
+    systemParts.Add(agentsContext.SystemPrompt);
+var skillsSection = skillsLoader.ToPromptSection();
+if (skillsSection != null)
+    systemParts.Add(skillsSection);
+var systemPrompt = systemParts.Count > 0 ? string.Join("\n\n", systemParts) : null;
 
 while (true)
 {
@@ -38,12 +50,11 @@ while (true)
 
     store.Append("user", input);
 
-    // Tool-calling loop: repeat until the model sends a text reply with no tool calls
     while (true)
     {
         try
         {
-            var history  = agentsContext.Prepend(store.LoadAll().Select(ToMessage).ToList());
+            var history = BuildHistory(systemPrompt, store.LoadAll().Select(ToMessage).ToList());
             var response = await provider.SendAsync(history, ToolDefinitions.All);
 
             if (response.ToolCalls == null || response.ToolCalls.Count == 0)
@@ -70,6 +81,14 @@ while (true)
             break;
         }
     }
+}
+
+static IReadOnlyList<ChatMessage> BuildHistory(string? systemPrompt, List<ChatMessage> history)
+{
+    if (systemPrompt == null) return history;
+    var result = new List<ChatMessage>(history.Count + 1) { new("system", systemPrompt) };
+    result.AddRange(history);
+    return result;
 }
 
 static ChatMessage ToMessage(ContextMessage m) => new(m.Role, m.Content)
