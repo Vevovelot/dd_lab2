@@ -9,6 +9,10 @@ var config = new ConfigurationBuilder()
 var maxTokens = int.Parse(config["Agent:MaxTokens"] ?? "8192");
 var provider  = ModelProviderFactory.Create(config, maxTokens);
 
+var activeProvider = config["Agent:ActiveProvider"]!;
+var contextWindow  = int.Parse(
+    config[$"Agent:Providers:{activeProvider}:ContextWindow"] ?? "0");
+
 var workingDir = Directory.GetCurrentDirectory();
 var dbPath     = ProjectIdentity.GetContextDbPath(workingDir);
 
@@ -22,7 +26,7 @@ if (skillsLoader.Skills.Count > 0)
     Console.WriteLine($"[{skillsLoader.Skills.Count} skill(s) loaded from SKILLS/]");
 
 Console.WriteLine($"iCode agent started. Working directory: {workingDir}");
-Console.WriteLine("Type '/exit' to quit.\n");
+Console.WriteLine("Type '/exit' to quit, '/context' for context usage.\n");
 
 // Build combined system prompt once at startup
 var systemParts = new System.Collections.Generic.List<string>();
@@ -33,8 +37,12 @@ if (skillsSection != null)
     systemParts.Add(skillsSection);
 var systemPrompt = systemParts.Count > 0 ? string.Join("\n\n", systemParts) : null;
 
-var agentRunner = new AgentRunner(provider, workingDir, skillsLoader, systemPrompt);
-var executor    = new ToolExecutor(workingDir, skillsLoader, subagentRunner: task => agentRunner.RunAsync(task));
+var permStore   = new PermissionStore(workingDir);
+var permissions = new PermissionManager(permStore, AskPermissionAsync);
+var agentRunner = new AgentRunner(provider, workingDir, skillsLoader, systemPrompt, permissions);
+var executor    = new ToolExecutor(workingDir, skillsLoader, subagentRunner: task => agentRunner.RunAsync(task), permissions: permissions);
+
+var lastInputTokens = 0;
 
 while (true)
 {
@@ -45,6 +53,17 @@ while (true)
     {
         Console.WriteLine("Goodbye.");
         break;
+    }
+
+    if (input.Trim() == "/context")
+    {
+        if (lastInputTokens == 0)
+            Console.WriteLine("[Context: no requests made yet]");
+        else if (contextWindow > 0)
+            Console.WriteLine($"[Context: {lastInputTokens} tokens ({lastInputTokens * 100.0 / contextWindow:F1}% of {contextWindow})]");
+        else
+            Console.WriteLine($"[Context: {lastInputTokens} tokens (ContextWindow not configured)]");
+        continue;
     }
 
     if (string.IsNullOrWhiteSpace(input))
@@ -58,6 +77,13 @@ while (true)
         {
             var history = BuildHistory(systemPrompt, store.LoadAll().Select(ToMessage).ToList());
             var response = await provider.SendAsync(history, ToolDefinitions.All);
+
+            if (response.InputTokens > 0)
+            {
+                lastInputTokens = response.InputTokens;
+                if (contextWindow > 0 && lastInputTokens > contextWindow * 0.8)
+                    Console.WriteLine($"[Warning: context is {lastInputTokens * 100.0 / contextWindow:F1}% full ({lastInputTokens}/{contextWindow} tokens)]");
+            }
 
             if (response.ToolCalls == null || response.ToolCalls.Count == 0)
             {
@@ -77,12 +103,34 @@ while (true)
                 store.AppendToolResult(toolCall.Id, toolCall.Name, result);
             }
         }
+        catch (ContextLengthException ex)
+        {
+            Console.Error.WriteLine($"[Context limit reached: {ex.Message}]");
+            Console.Error.WriteLine("Use '/exit' to start a new session, or continue with a shorter message.");
+            break;
+        }
         catch (Exception ex)
         {
             Console.Error.WriteLine($"Error: {ex.Message}");
             break;
         }
     }
+}
+
+static async Task<PermissionGrant?> AskPermissionAsync(string toolName, string preview)
+{
+    Console.WriteLine($"\n[Permission required] {preview}");
+    Console.WriteLine("  [1] Allow once  [2] Allow for this session  [3] Allow always  [n] Deny");
+    Console.Write("Your choice: ");
+    var answer = Console.ReadLine()?.Trim().ToLowerInvariant();
+    Console.WriteLine();
+    return answer switch
+    {
+        "1" => PermissionGrant.Once,
+        "2" => PermissionGrant.Session,
+        "3" => PermissionGrant.Always,
+        _   => (PermissionGrant?)null
+    };
 }
 
 static IReadOnlyList<ChatMessage> BuildHistory(string? systemPrompt, List<ChatMessage> history)

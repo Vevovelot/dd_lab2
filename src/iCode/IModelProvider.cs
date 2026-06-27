@@ -14,8 +14,15 @@ public record ToolCall(string Id, string Name, string Arguments);
 public record ProviderResponse(
     string Content,
     IReadOnlyList<ToolCall>? ToolCalls = null,
-    string? ToolCallsJson = null
+    string? ToolCallsJson = null,
+    int InputTokens = 0,
+    int OutputTokens = 0
 );
+
+public class ContextLengthException : Exception
+{
+    public ContextLengthException(string message) : base(message) { }
+}
 
 public interface IModelProvider
 {

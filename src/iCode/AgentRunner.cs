@@ -8,24 +8,27 @@ public class AgentRunner
     private readonly string _workingDirectory;
     private readonly SkillsLoader? _skillsLoader;
     private readonly string? _systemPrompt;
+    private readonly PermissionManager? _permissions;
 
     public AgentRunner(
         IModelProvider provider,
         string workingDirectory,
         SkillsLoader? skillsLoader,
-        string? systemPrompt)
+        string? systemPrompt,
+        PermissionManager? permissions = null)
     {
         _provider = provider;
         _workingDirectory = workingDirectory;
         _skillsLoader = skillsLoader;
         _systemPrompt = systemPrompt;
+        _permissions = permissions;
     }
 
     // Runs a task with clean in-memory context; returns the final assistant response.
     public async Task<string> RunAsync(string task, CancellationToken ct = default)
     {
-        // Subagent gets its own executor without a subagent runner — prevents nesting.
-        var executor = new ToolExecutor(_workingDirectory, _skillsLoader);
+        // Subagent: no subagent runner (prevents nesting); shares PermissionManager (non-interactive).
+        var executor = new ToolExecutor(_workingDirectory, _skillsLoader, permissions: _permissions);
 
         var messages = new List<ChatMessage>();
         if (_systemPrompt != null)

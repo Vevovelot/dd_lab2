@@ -9,12 +9,18 @@ public class ToolExecutor
     private readonly string _workingDirectory;
     private readonly SkillsLoader? _skillsLoader;
     private readonly Func<string, Task<string>>? _subagentRunner;
+    private readonly PermissionManager? _permissions;
 
-    public ToolExecutor(string workingDirectory, SkillsLoader? skillsLoader = null, Func<string, Task<string>>? subagentRunner = null)
+    public ToolExecutor(
+        string workingDirectory,
+        SkillsLoader? skillsLoader = null,
+        Func<string, Task<string>>? subagentRunner = null,
+        PermissionManager? permissions = null)
     {
         _workingDirectory = Path.GetFullPath(workingDirectory);
         _skillsLoader = skillsLoader;
         _subagentRunner = subagentRunner;
+        _permissions = permissions;
     }
 
     public async Task<string> ExecuteAsync(string toolName, string argumentsJson)
@@ -26,11 +32,11 @@ public class ToolExecutor
             return toolName switch
             {
                 "read_file"       => ReadFile(args),
-                "write_file"      => WriteFile(args),
+                "write_file"      => await GuardedWriteFileAsync(args),
                 "update_file"     => UpdateFile(args),
-                "delete_file"     => DeleteFile(args),
+                "delete_file"     => await GuardedDeleteFileAsync(args),
                 "list_files"      => ListFiles(args),
-                "execute_command" => await ExecuteCommandAsync(args),
+                "execute_command" => await GuardedExecuteCommandAsync(args),
                 "load_skill"      => LoadSkill(args),
                 "run_subagent"    => await RunSubagentAsync(args),
                 _                 => $"Error: unknown tool '{toolName}'"
@@ -40,6 +46,30 @@ public class ToolExecutor
         {
             return $"Error: {ex.Message}";
         }
+    }
+
+    private async Task<string> GuardedWriteFileAsync(JsonElement args)
+    {
+        var path = args.GetProperty("path").GetString()!;
+        if (_permissions != null && !await _permissions.RequestAsync("write_file", $"Write file: {path}"))
+            return $"Permission denied: write_file '{path}'";
+        return WriteFile(args);
+    }
+
+    private async Task<string> GuardedDeleteFileAsync(JsonElement args)
+    {
+        var path = args.GetProperty("path").GetString()!;
+        if (_permissions != null && !await _permissions.RequestAsync("delete_file", $"Delete file: {path}"))
+            return $"Permission denied: delete_file '{path}'";
+        return DeleteFile(args);
+    }
+
+    private async Task<string> GuardedExecuteCommandAsync(JsonElement args)
+    {
+        var command = args.GetProperty("command").GetString()!;
+        if (_permissions != null && !await _permissions.RequestAsync("execute_command", $"Execute: {command}"))
+            return $"Permission denied: execute_command '{command}'";
+        return await ExecuteCommandAsync(args);
     }
 
     private string ReadFile(JsonElement args)

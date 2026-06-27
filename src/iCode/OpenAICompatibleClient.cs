@@ -55,7 +55,11 @@ public class OpenAICompatibleClient : IModelProvider
         var responseBody = await response.Content.ReadAsStringAsync(ct);
 
         if (!response.IsSuccessStatusCode)
+        {
+            if (IsContextLengthError(responseBody))
+                throw new ContextLengthException($"Context length exceeded. Provider response: {responseBody}");
             throw new HttpRequestException($"API error {(int)response.StatusCode}: {responseBody}");
+        }
 
         using var doc = JsonDocument.Parse(responseBody);
         var message = doc.RootElement
@@ -78,7 +82,30 @@ public class OpenAICompatibleClient : IModelProvider
             )).ToList();
         }
 
-        return new ProviderResponse(content, toolCalls, toolCallsJson);
+        var (inputTokens, outputTokens) = ParseUsage(doc.RootElement);
+        return new ProviderResponse(content, toolCalls, toolCallsJson, inputTokens, outputTokens);
+    }
+
+    private static (int input, int output) ParseUsage(JsonElement root)
+    {
+        if (!root.TryGetProperty("usage", out var usage))
+            return (0, 0);
+
+        // OpenAI: prompt_tokens/completion_tokens; Anthropic: input_tokens/output_tokens
+        int input = 0, output = 0;
+        if (usage.TryGetProperty("prompt_tokens", out var pt))   input  = pt.GetInt32();
+        if (usage.TryGetProperty("input_tokens", out var it))    input  = it.GetInt32();
+        if (usage.TryGetProperty("completion_tokens", out var ct)) output = ct.GetInt32();
+        if (usage.TryGetProperty("output_tokens", out var ot))   output = ot.GetInt32();
+        return (input, output);
+    }
+
+    private static bool IsContextLengthError(string responseBody)
+    {
+        // Covers OpenAI ("context_length_exceeded") and Anthropic ("prompt is too long")
+        return responseBody.Contains("context_length_exceeded", StringComparison.OrdinalIgnoreCase)
+            || responseBody.Contains("prompt is too long", StringComparison.OrdinalIgnoreCase)
+            || responseBody.Contains("maximum context length", StringComparison.OrdinalIgnoreCase);
     }
 
     private static JsonNode SerializeMessage(ChatMessage m)
