@@ -8,11 +8,13 @@ public class ToolExecutor
 {
     private readonly string _workingDirectory;
     private readonly SkillsLoader? _skillsLoader;
+    private readonly Func<string, Task<string>>? _subagentRunner;
 
-    public ToolExecutor(string workingDirectory, SkillsLoader? skillsLoader = null)
+    public ToolExecutor(string workingDirectory, SkillsLoader? skillsLoader = null, Func<string, Task<string>>? subagentRunner = null)
     {
         _workingDirectory = Path.GetFullPath(workingDirectory);
         _skillsLoader = skillsLoader;
+        _subagentRunner = subagentRunner;
     }
 
     public async Task<string> ExecuteAsync(string toolName, string argumentsJson)
@@ -30,6 +32,7 @@ public class ToolExecutor
                 "list_files"      => ListFiles(args),
                 "execute_command" => await ExecuteCommandAsync(args),
                 "load_skill"      => LoadSkill(args),
+                "run_subagent"    => await RunSubagentAsync(args),
                 _                 => $"Error: unknown tool '{toolName}'"
             };
         }
@@ -120,6 +123,14 @@ public class ToolExecutor
         if (!string.IsNullOrEmpty(stderr))  result += $"\nSTDERR: {stderr}";
         if (process.ExitCode != 0)          result += $"\nExit code: {process.ExitCode}";
         return string.IsNullOrWhiteSpace(result) ? "(no output)" : result;
+    }
+
+    private async Task<string> RunSubagentAsync(JsonElement args)
+    {
+        if (_subagentRunner == null)
+            return "Error: subagent is not available in this context";
+        var task = args.GetProperty("task").GetString()!;
+        return await _subagentRunner(task);
     }
 
     private string LoadSkill(JsonElement args)

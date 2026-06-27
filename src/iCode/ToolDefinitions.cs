@@ -4,7 +4,11 @@ namespace iCode;
 
 public static class ToolDefinitions
 {
-    public static readonly IReadOnlyList<JsonObject> All = new List<JsonObject>
+    // All tools available to the main agent (including run_subagent).
+    public static readonly IReadOnlyList<JsonObject> All;
+
+    // Tools available to subagents — excludes run_subagent to prevent nesting.
+    public static readonly IReadOnlyList<JsonObject> WithoutSubagent = new List<JsonObject>
     {
         Tool("read_file", "Read the contents of a file in the working directory",
             Props(Str("path", "File path relative to the working directory")),
@@ -39,6 +43,17 @@ public static class ToolDefinitions
             Props(Str("name", "Skill name exactly as shown in the Available Skills list")),
             required: ["name"])
     };
+
+    static ToolDefinitions()
+    {
+        var all = new List<JsonObject>(WithoutSubagent)
+        {
+            Tool("run_subagent", "Run a subtask in an isolated agent with a clean context and return its result",
+                Props(Str("task", "Natural language description of the subtask for the subagent")),
+                required: ["task"])
+        };
+        All = all;
+    }
 
     private static JsonObject Tool(string name, string description, JsonObject properties, string[] required) =>
         new()

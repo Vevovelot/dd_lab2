@@ -15,7 +15,6 @@ var dbPath     = ProjectIdentity.GetContextDbPath(workingDir);
 using var store   = new ContextStore(dbPath);
 var agentsContext  = new AgentsContext(workingDir);
 var skillsLoader   = new SkillsLoader(workingDir);
-var executor       = new ToolExecutor(workingDir, skillsLoader);
 
 if (agentsContext.SystemPrompt != null)
     Console.WriteLine("[AGENTS.md loaded into system prompt]");
@@ -33,6 +32,9 @@ var skillsSection = skillsLoader.ToPromptSection();
 if (skillsSection != null)
     systemParts.Add(skillsSection);
 var systemPrompt = systemParts.Count > 0 ? string.Join("\n\n", systemParts) : null;
+
+var agentRunner = new AgentRunner(provider, workingDir, skillsLoader, systemPrompt);
+var executor    = new ToolExecutor(workingDir, skillsLoader, subagentRunner: task => agentRunner.RunAsync(task));
 
 while (true)
 {
